@@ -1,0 +1,328 @@
+#!/bin/bash
+#
+# vyTool - Generate configs, OpenSSL keypairs & SSH keyrings for Vyatta-based systems
+#
+SID=${RANDOM}
+DATETIME="$(date +%Y%m%d%H%M%S)"
+CONF_ROOT="/etc/vytool"
+CONFIG_SAMPLES_DIR="${CONF_ROOT}/config-samples"
+OPENSSL_CONFIG_FILE="${CONF_ROOT}/openssl.cnf"
+SSH_KEYS_DIR="${CONF_ROOT}/ssh-keys"
+SHARE_ROOT="/usr/share/vytool"
+OPENSSL_CONFIG_SAMPLE_FILE="${SHARE_ROOT}/openssl.cnf.sample"
+DATA_ROOT="/var/lib/vytool"
+CONFIGS_DIR="${DATA_ROOT}/configs"
+OPENSSL_DIR="${DATA_ROOT}/openssl"
+OPENSSL_KEYPAIRS_DIR="${OPENSSL_DIR}/keypairs"
+OPENSSL_CRL_DIR="${OPENSSL_DIR}/.crl"
+OPENSSL_CRL_FILE="${OPENSSL_CRL_DIR}/${DATETIME}-${SID}.pem"
+OPENSSL_CRL_LINK="${OPENSSL_DIR}/crl.pem"
+SSH_KEYRINGS_DIR="${DATA_ROOT}/ssh-keyrings"
+source "${CONF_ROOT}/environment"
+
+function suicide() {
+  echo
+  echo "[ ERROR ]" >&2
+  echo -e "${@}" >&2
+  echo
+  rm -f /tmp/vytool.*.${SID}
+  exit 1
+}
+
+function separator() {
+  echo "--------------------------------------------------------------------------------"
+}
+
+function show_help() {
+  echo "[ vyTool - Generate configs, OpenSSL keypairs & SSH keyrings for Vyatta-based systems ]"
+  echo "Usage:"
+  echo "  vytool create-config <config-sample> <host-name> [--<key1>=<value1> --<key2>=<value2> ... --<keyN>=<valueN>]"
+  echo "         create-bundle <config-sample> <host-name> [--<key1>=<value1> --<key2>=<value2> ... --<keyN>=<valueN>]"
+  echo "         destroy-config <host-name>"
+  echo "         list-configs [<grep_expr>]"
+  echo "         samplify-config-boot <config_boot_file>"
+  echo "         list-config-samples [<grep_expr>]"
+  echo "         create-openssl-keypair <host-name>"
+  echo "         destroy-openssl-keypair <host-name>"
+  echo "         list-openssl-keypairs [<grep_expr>]"
+  echo "         create-ssh-keyring <keyring> <ssh-key1> <ssh-key2> ... <ssh-keyN>"
+  echo "         destroy-ssh-keyring <keyring>"
+  echo "         list-ssh-keyrings [<grep_expr>]"
+  echo "         list-ssh-keys [<grep_expr>]"
+}
+
+function create_config() {
+  if [ ${#} -lt 2 ]; then
+    suicide "Not enough params for create-config!"
+  fi
+  CONFIG_SAMPLE="${1}"; shift
+  HOST_NAME="${1}"; shift
+  TMP_CONFIG_FILE="/tmp/vytool.config.boot.${SID}"
+  CONFIG_FILE="${CONFIGS_DIR}/${HOST_NAME}.config"
+  CONFIG_SAMPLE_FILE="${CONFIG_SAMPLES_DIR}/${CONFIG_SAMPLE}.sample"
+  if [ $(list_configs | egrep "^${HOST_NAME}$") ]; then
+    suicide "Config already exists: ${HOST_NAME}"
+  fi
+  if [ -e "${CONFIG_FILE}" ]; then
+    suicide "File already exists: ${CONFIG_FILE}"
+  fi
+  echo "Using sample: ${CONFIG_SAMPLE_FILE}"
+  ${SHARE_ROOT}/process-sample-file "${CONFIG_SAMPLE_FILE}" --host-name=${HOST_NAME} ${@} >"${TMP_CONFIG_FILE}"
+  if [ ${?} -ne 0 ]; then
+    suicide "Sample processing failed: ${CONFIG_SAMPLE_FILE}"
+  fi
+  ${SHARE_ROOT}/validate-vyatta-config.pl "${TMP_CONFIG_FILE}"
+  if [ ${?} -ne 0 ]; then
+    suicide "Config validation failed: ${TMP_CONFIG_FILE}"
+  fi
+  if [ -n "${CONFIG_PASSWORD}" ]; then
+    openssl enc -aes-256-cbc -a -salt -in "${TMP_CONFIG_FILE}" -out "${CONFIG_FILE}" -pass pass:"${CONFIG_PASSWORD}"
+  else
+    suicide "You must NOT use this command with no password set!"
+  fi
+  rm "${TMP_CONFIG_FILE}"
+  separator
+  echo "[ ${HOST_NAME} ]"
+  echo "Generated config file: ${CONFIG_FILE}"
+  if [ -n ${CONFIG_PASSWORD} ]; then
+    echo "Config password: $CONFIG_PASSWORD"
+  fi
+  separator
+}
+
+function create_bundle() {
+  OPENSSL_KEY_PASSWORD="${CONFIG_PASSWORD}"
+  create_config ${@} >/dev/null
+  create_openssl_keypair ${2} >/dev/null
+  separator
+  echo "[ ${HOST_NAME} ]"
+  echo "Config/OpenSSL private key bundle password: ${CONFIG_PASSWORD}"
+  separator
+}
+
+function destroy_config() {
+  if [ ${#} -ne 1 ]; then
+    suicide "destroy-config takes only one argument: config name"
+  fi
+  HOST_NAME=${1}
+  CONFIG_FILE="${CONFIGS_DIR}/${HOST_NAME}.config"
+  if [ ! -e "${CONFIG_FILE}" ]; then
+    suicide "File does not exist: ${CONFIG_FILE}"
+  fi
+  rm "${CONFIG_FILE}"
+  echo "[ Destroyed config ${HOST_NAME} ]"
+  echo "Config file ${CONFIG_FILE} deleted"
+}
+
+function list_configs() {
+  if [ ${#} -gt 0 ]; then
+    GREP_EXPR=${@}
+  else
+    GREP_EXPR="."
+  fi
+  ls -1 "${CONFIGS_DIR}" | sed 's/\.config$//' | egrep "${GREP_EXPR}"
+}
+
+function samplify_config_boot() {
+  if [ ${#} -ne 1 ]; then
+    suicide "samplify-config-boot takes only one argument: config.boot file name"
+  fi
+  CONFIG_BOOT_FILE="${1}"
+  ${SHARE_ROOT}/validate-vyatta-config.pl "${CONFIG_BOOT_FILE}"
+  if [ ${?} -ne 0 ]; then
+    suicide "Invalid config.boot file: ${CONFIG_BOOT_FILE}"
+  fi
+  egrep -v "\s+hw-d " "${CONFIG_BOOT_FILE}" | sed 's/host-name.*[a-zA-Z0-9-]$/host-name %(host-name)/'
+}
+
+function list_config_samples() {
+  if [ ${#} -gt 0 ]; then
+    GREP_EXPR=${@}
+  else
+    GREP_EXPR="."
+  fi
+  ls -1 "${CONFIG_SAMPLES_DIR}" | sed 's/\.sample$//' | egrep "${GREP_EXPR}"
+}
+
+function create_openssl_keypair() {
+  if [ ${#} -ne 1 ]; then
+    suicide "create-openssl-keypair takes only one argument: host-name"
+  fi
+  HOST_NAME="${1}"
+  TMP_OPENSSL_CONFIG_FILE="/tmp/vytool.openssl.cnf.${SID}"
+  TMP_OPENSSL_CSR_FILE="/tmp/vytool.openssl.csr.${SID}"
+  TMP_OPENSSL_KEY_FILE="/tmp/vytool.openssl.key.${SID}"
+  TMP_OPENSSL_CRT_FILE="/tmp/vytool.openssl.crt.${SID}"
+  OPENSSL_KEY_FILE="${OPENSSL_KEYPAIRS_DIR}/${HOST_NAME}.key"
+  OPENSSL_CRT_FILE="${OPENSSL_KEYPAIRS_DIR}/${HOST_NAME}.crt"
+  if [ ! $(list_configs | egrep "^${HOST_NAME}$") ]; then
+    suicide "Config does not exist(create config first): ${HOST_NAME}"
+  fi
+  if [ $(list_openssl_keypairs | egrep "^${HOST_NAME}$") ]; then
+    suicide "OpenSSL keypair already exists: ${HOST_NAME}"
+  fi
+  sed "s/^commonName_default.*$/commonName_default = ${HOST_NAME}/" "${OPENSSL_CONFIG_FILE}" >"${TMP_OPENSSL_CONFIG_FILE}"
+  openssl req -batch -nodes -new -keyout "${TMP_OPENSSL_KEY_FILE}" -out "${TMP_OPENSSL_CSR_FILE}" -config "${TMP_OPENSSL_CONFIG_FILE}" >/dev/null 2>&1
+  if [ ${?} -ne 0 ]; then
+    suicide "OpenSSL private key/certificate request generation failed!"
+  fi
+  openssl ca -batch -in "${TMP_OPENSSL_CSR_FILE}" -out "${TMP_OPENSSL_CRT_FILE}" -config "${TMP_OPENSSL_CONFIG_FILE}" >/dev/null 2>&1
+  if [ ${?} -ne 0 ]; then
+    suicide "OpenSSL certificate signing failed!"
+  fi
+  if [ -n "${OPENSSL_KEY_PASSWORD}" ]; then
+    openssl enc -aes-256-cbc -a -salt -in "${TMP_OPENSSL_KEY_FILE}" -out "${OPENSSL_KEY_FILE}" -pass pass:"${OPENSSL_KEY_PASSWORD}"
+  else
+    suicide "You must NOT use this command with no password set!"
+  fi
+  cp "${TMP_OPENSSL_CRT_FILE}" "${OPENSSL_CRT_FILE}"
+  rm "${TMP_OPENSSL_CONFIG_FILE}" "${TMP_OPENSSL_KEY_FILE}" "${TMP_OPENSSL_CSR_FILE}" "${TMP_OPENSSL_CRT_FILE}"
+  separator
+  echo "[ ${HOST_NAME} ]"
+  echo "Generated OpenSSL certificate file: ${OPENSSL_CRT_FILE}"
+  echo "Generated OpenSSL private key file: ${OPENSSL_KEY_FILE}"
+  echo "OpenSSL private key password: ${OPENSSL_KEY_PASSWORD}"
+  separator
+}
+
+function destroy_openssl_keypair() {
+  if [ ${#} -ne 1 ]; then
+    suicide "destroy-openssl-keypair takes only one argument: host-name"
+  fi
+  HOST_NAME="${1}"
+  OPENSSL_KEY_FILE="${OPENSSL_KEYPAIRS_DIR}/${HOST_NAME}.key"
+  OPENSSL_CRT_FILE="${OPENSSL_KEYPAIRS_DIR}/${HOST_NAME}.crt"
+  if [ ! $(list_openssl_keypairs | egrep "^${HOST_NAME}$") ]; then
+    suicide "OpenSSL keypair doest not exist: ${HOST_NAME}"
+  fi
+  OPENSSL_CRT_DATE="$(openssl x509 -in "${OPENSSL_CRT_FILE}" -noout -startdate | sed 's/^notBefore=//')"
+  openssl ca -revoke "${OPENSSL_CRT_FILE}" -config "${OPENSSL_CONFIG_FILE}"
+  openssl ca -gencrl -out "${OPENSSL_CRL_FILE}" -config "${OPENSSL_CONFIG_FILE}"
+  rm -f "${OPENSSL_CRL_LINK}"
+  ln -s "${OPENSSL_CRL_FILE}" "${OPENSSL_CRL_LINK}"
+  rm "${OPENSSL_KEY_FILE}" "${OPENSSL_CRT_FILE}"
+  separator
+  echo "[ Destroyed ${HOST_NAME} created at ${OPENSSL_CRT_DATE} ]"
+  echo "OpenSSL certificate revoked, keypair deleted"
+  separator
+}
+
+function list_openssl_keypairs() {
+  if [ ${#} -gt 0 ]; then
+    GREP_EXPR=${@}
+  else
+    GREP_EXPR="."
+  fi
+  ls -1 "${OPENSSL_KEYPAIRS_DIR}" | egrep ".*\.crt$" | sed 's/\.crt$//' | egrep "${GREP_EXPR}"
+}
+
+function recreate_openssl_instance() {
+  if [ ${#} -gt 0 ]; then
+    NEW_INSTANCE_NAME="${@}"
+  else
+    NEW_INSTANCE_NAME=${RANDOM}
+  fi 
+  TMP_OPENSSL_CONFIG_FILE="/tmp/vytool.openssl.cnf.${SID}"
+
+  echo "Using ${OPENSSL_CONFIG_SAMPLE_FILE} as sample to create new vyTool OpenSSL config..."
+  ${SHARE_ROOT}/process-sample-file "${OPENSSL_CONFIG_SAMPLE_FILE}" --instance-name=${NEW_INSTANCE_NAME} >"${TMP_OPENSSL_CONFIG_FILE}"
+  if [ ${?} -ne 0 ]; then
+    suicide "OpenSSL config sample processing failed: ${OPENSSL_CONFIG_SAMPLE_FILE}"
+  fi
+  mv "${TMP_OPENSSL_CONFIG_FILE}" "${OPENSSL_CONFIG_FILE}"
+  echo "Removing existing CA hierarchy..."
+  cd "${OPENSSL_DIR}"
+  rm -f CA.crt .private/CA.key
+  rm -f crl.pem .crl/*
+  rm -f .data/*
+  rm -f keypairs/*
+  rm -f .new_certs/*
+  echo "Creating new CA hierarchy..."
+  openssl req -batch -nodes -new -x509 -keyout .private/CA.key -out CA.crt -config "${OPENSSL_CONFIG_FILE}" -days 7300 >/dev/null 2>&1
+  if [ ${?} -ne 0 ]; then
+    suicide "OpenSSL CA certificate and private key generation failed!"
+  fi
+  touch .data/index.txt
+  echo '00' >> .data/serial
+  openssl ca -gencrl -out "${OPENSSL_CRL_FILE}" -config "${OPENSSL_CONFIG_FILE}"
+  ln -s "${OPENSSL_CRL_FILE}" "${OPENSSL_CRL_LINK}"
+  cd "${OLDPWD}"
+  echo "New CA hierarchy created successfully!"
+}
+
+function create_ssh_keyring() {
+  if [ ${#} -lt 2 ]; then
+    suicide "Not enough params for create-ssh-keyring!"
+  fi
+  SSH_KEYRING="${1}"; shift
+  SSH_KEYRING_FILE="${SSH_KEYRINGS_DIR}/${SSH_KEYRING}.authorized_keys";
+  if [ $(list_ssh_keyrings | egrep "^${SSH_KEYRING}$") ]; then
+    suicide "SSH keyring already exists: ${SSH_KEYRING}"
+  fi
+  TMP_SSH_KEYRING_FILE="/tmp/vytool.authorized_keys.${SID}"
+  for SSH_KEY in ${@}; do
+    SSH_KEY_FILE="${SSH_KEYS_DIR}/${SSH_KEY}.pub"
+    if [ ! -e "${SSH_KEY_FILE}" ]; then
+      suicide "SSH key file does not exist: ${SSH_KEY_FILE}"
+    fi
+    cat "${SSH_KEY_FILE}" >> "${TMP_SSH_KEYRING_FILE}"
+  done
+  mv "${TMP_SSH_KEYRING_FILE}" "${SSH_KEYRING_FILE}"
+  separator
+  echo "[ ${SSH_KEYRING} ]"
+  echo "Created SSH keyring file: ${SSH_KEYRING_FILE}"
+  separator
+}
+
+function destroy_ssh_keyring() {
+  if [ ${#} -ne 1 ]; then
+    suicide "destory-ssh-keyring takes only one argument: SSH keyring"
+  fi
+  SSH_KEYRING="${1}"
+  SSH_KEYRING_FILE="${SSH_KEYRINGS_DIR}/${SSH_KEYRING}.authorized_keys";
+  if [ ! -e "${SSH_KEYRING_FILE}" ]; then
+    suicide "File does not exist: ${SSH_KEYRING_FILE}"
+  fi
+  rm "${SSH_KEYRING_FILE}" 
+}
+
+function list_ssh_keyrings() {
+  if [ ${#} -gt 0 ]; then
+    GREP_EXPR=${@}
+  else
+    GREP_EXPR="."
+  fi
+  ls -1 "${SSH_KEYRINGS_DIR}" | sed 's/\.authorized_keys$//' | egrep "${GREP_EXPR}"
+}
+
+function list_ssh_keys() {
+  if [ ${#} -gt 0 ]; then
+    GREP_EXPR=${@}
+  else
+    GREP_EXPR="."
+  fi
+  ls -1 "${SSH_KEYS_DIR}" | sed 's/\.pub$//' | egrep "${GREP_EXPR}"
+}
+
+if [ ${UID} -ne 0 ]; then
+  suicide "vyTool must be launched from root!"
+fi
+
+case ${1} in
+  'create-config')shift; create_config ${@};;
+  'create-bundle')shift; create_bundle ${@};;
+  'destroy-config')shift; destroy_config ${@};;
+  'list-configs')shift; list_configs ${@};;
+  'samplify-config-boot')shift; samplify_config_boot ${@};;
+  'list-config-samples')shift; list_config_samples ${@};;
+  'create-openssl-keypair')shift; create_openssl_keypair ${@};;
+  'destroy-openssl-keypair')shift; destroy_openssl_keypair ${@};;
+  'list-openssl-keypairs')shift; list_openssl_keypairs ${@};;
+  'recreate-openssl-instance')shift; recreate_openssl_instance ${@};;
+  'create-ssh-keyring')shift; create_ssh_keyring ${@};;
+  'destroy-ssh-keyring')shift; destroy_ssh_keyring ${@};;
+  'list-ssh-keyrings')shift; list_ssh_keyrings ${@};;
+  'list-ssh-keys')shift; list_ssh_keys ${@};;
+  'show-help'|'--help')show_help;;
+  *)show_help; exit 1;;
+esac

@@ -1,0 +1,335 @@
+#
+# @DESC
+#
+#
+firewall {
+    all-ping enable
+    broadcast-ping disable
+    conntrack-expect-table-size 4096
+    conntrack-hash-size 4096
+    conntrack-table-size 32768
+    conntrack-tcp-loose enable
+    ip-src-route disable
+    ipv6-receive-redirects disable
+    ipv6-src-route disable
+    log-martians enable
+    name LAN_in {
+        default-action drop
+        description "Rule set for LAN inbound forwarded traffic"
+        rule 10 {
+            action accept
+            description "Accept established and related packets"
+            state {
+                established enable
+                related enable
+            }
+        }
+        rule 20 {
+            action accept
+            description "Accept ICMP Echo Request (Ping)"
+            icmp {
+                code 0
+                type 8
+            }
+            protocol icmp
+        }
+        rule 50 {
+            action accept
+            description "Accept everything from Patrick Bateman office PC (Example)"
+            source {
+                mac-address 00:1c:c4:ce:f8:9d
+            }
+        }
+        rule 100 {
+            action accept
+            description "Accept traffic to Class A private networks"
+            destination {
+                address 10.0.0.0/8
+            }
+        }
+        rule 101 {
+            action accept
+            description "Accept traffic to Class B private networks"
+            destination {
+                address 172.16.0.0/12
+            }
+        }
+        rule 102 {
+            action accept
+            description "Accept traffic to Class C private networks"
+            destination {
+                address 192.168.0.0/16
+            }
+        }
+        rule 110 {
+            action drop
+            description "Drop connections to external SMTP servers"
+            destination {
+                port smtp
+            }
+            protocol tcp
+        }
+    }
+    name WAN_in {
+        default-action drop
+        description "Rule set for WAN inbound forwarded traffic"
+        rule 10 {
+            action accept
+            description "Accept established and related packets"
+            state {
+                established enable
+                related enable
+            }
+        }
+    }
+    name WAN_local {
+        default-action drop
+        description "Rule set for WAN inbound local traffic"
+        rule 10 {
+            action accept
+            description "Accept established and related packets"
+            state {
+                established enable
+                related enable
+            }
+        }
+        rule 20 {
+            action accept
+            description "Accept ICMP Echo Request (Ping)"
+            icmp {
+                code 0
+                type 8
+            }
+            protocol icmp
+        }
+        rule 30 {
+            action accept
+            description "Accept SSH"
+            destination {
+                port ssh
+            }
+            protocol tcp
+        }
+    }
+    receive-redirects disable
+    send-redirects disable
+    source-validation disable
+    syn-cookies enable
+}
+interfaces {
+    ethernet eth0 {
+        address 192.168.%(lan-id).254/24
+        description LAN
+        duplex auto
+        firewall {
+            in {
+                name LAN_in
+            }
+        }
+        smp_affinity auto
+        speed auto
+        traffic-policy {
+            out Shaper4LAN
+        }
+    }
+    ethernet eth1 {
+        address dhcp
+        description WAN
+        duplex auto
+        firewall {
+            in {
+                name WAN_in
+            }
+            local {
+                name WAN_local
+            }
+        }
+        smp_affinity auto
+        speed auto
+        traffic-policy {
+            in Limiter4WAN
+            out Shaper4WAN
+        }
+    }
+}
+service {
+    dhcp-server {
+        disabled false
+        shared-network-name LAN {
+            authoritative enable
+            subnet 192.168.%(lan-id).0/24 {
+                default-router 192.168.%(lan-id).254
+                dns-server 192.168.%(lan-id).254
+                domain-name vvpgroup.vvpgroup.com
+                lease 86400
+                ntp-server %(ntp-server)
+                start 192.168.%(lan-id).201 {
+                    stop 192.168.%(lan-id).240
+                }
+            }
+        }
+    }
+    dns {
+        forwarding {
+            cache-size 1500
+            dhcp eth1
+            listen-on eth0
+        }
+    }
+    https
+    nat {
+        rule 1 {
+            description WAN
+            destination {
+                address 0.0.0.0/0
+            }
+            outbound-interface eth1
+            protocol all
+            source {
+                address 192.168.%(lan-id).0/24
+            }
+            type masquerade
+        }
+    }
+    ssh {
+        allow-root
+        port 22
+        protocol-version v2
+    }
+}
+system {
+    domain-name %(domain-name)
+    host-name %(host-name)
+    login {
+        user root {
+            authentication {
+		encrypted-password $1$4U1te5Tt$6Xm52BDXpt6knS9kmDVJ4/
+                plaintext-password ""
+            }
+            level admin
+        }
+        user vyatta {
+            authentication {
+		encrypted-password $1$4U1te5Tt$6Xm52BDXpt6knS9kmDVJ4/
+                plaintext-password ""
+            }
+            level admin
+        }
+    }
+    ntp-server %(ntp-server)
+    options {
+        reboot-on-panic true
+    }
+    package {
+        auto-sync 1
+        repository community {
+            components main
+            distribution stable
+            password ""
+            url http://packages.vyatta.com/vyatta
+            username ""
+        }
+        repository lenny {
+            components "main contrib non-free"
+            distribution lenny
+            password ""
+            url http://ftp.de.debian.org/debian
+            username ""
+        }
+        repository vyatta4people {
+            components main
+            distribution experimental
+            password ""
+            url http://packages.vyatta4people.org/debian
+            username ""
+        }
+    }
+    time-zone Europe/Riga
+}
+traffic-policy {
+    limiter Limiter4WAN {
+        default {
+            bandwidth 5mbit
+            burst 15k
+        }
+        description "WAN inbound QoS policy"
+    }
+    shaper Shaper4LAN {
+        bandwidth 100mbit
+        class 100 {
+            bandwidth 45%
+            burst 15k
+            ceiling 80%
+            description "UDP traffic"
+            match UDP {
+                ip {
+                    protocol udp
+                }
+            }
+            priority 0
+            queue-type fair-queue
+        }
+        class 200 {
+            bandwidth 45%
+            burst 15k
+            ceiling 80%
+            description "TCP traffic"
+            match TCP {
+                ip {
+                    protocol tcp
+                }
+            }
+            priority 1
+            queue-type fair-queue
+        }
+        default {
+            bandwidth 10%
+            burst 15k
+            ceiling 80%
+            priority 7
+            queue-type fair-queue
+        }
+        description "LAN outbound QoS policy"
+    }
+    shaper Shaper4WAN {
+        bandwidth 5mbit
+        class 100 {
+            bandwidth 45%
+            burst 15k
+            ceiling 80%
+            description "UDP traffic"
+            match UDP {
+                ip {
+                    protocol udp
+                }
+            }
+            priority 0
+            queue-type fair-queue
+        }
+        class 200 {
+            bandwidth 45%
+            burst 15k
+            ceiling 80%
+            description "TCP traffic"
+            match TCP {
+                ip {
+                    protocol tcp
+                }
+            }
+            priority 1
+            queue-type fair-queue
+        }
+        default {
+            bandwidth 10%
+            burst 15k
+            ceiling 80%
+            priority 7
+            queue-type fair-queue
+        }
+        description "WAN outbound QoS policy"
+    }
+}
+
+
+/* Warning: Do not remove the following line. */
+/* === vyatta-config-version: "system@3:firewall@3:dhcp-server@4:cluster@1:dhcp-relay@1:ipsec@2:nat@3:wanloadbalance@2:webproxy@1:conntrack-sync@1:qos@1:webgui@1:quagga@2:vrrp@1" === */
