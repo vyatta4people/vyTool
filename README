@@ -1,0 +1,5 @@
+Generate configs, OpenSSL keypairs & SSH public keyrings for Vyatta-based systems.
+Use config.boot samples(templates) to generate configurations for different scenarios.
+Use your own easy OpenSSL CA hierarchy to generate certificate/private key pairs for
+IPSec, OpenVPN, WWW, etc.
+Use SSH public keys distribution to harden security and ease management of Vyatta systems.

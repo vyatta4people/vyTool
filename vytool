@@ -33,6 +33,10 @@ function separator() {
   echo "--------------------------------------------------------------------------------"
 }
 
+function all_ok() {
+  echo "ALL OK! Use command below on remote host:"
+}
+
 function show_help() {
   echo "[ vyTool - Generate configs, OpenSSL keypairs & SSH keyrings for Vyatta-based systems ]"
   echo "Usage:"
@@ -41,14 +45,14 @@ function show_help() {
   echo "         destroy-config <host-name>"
   echo "         list-configs [<grep_expr>]"
   echo "         samplify-config-boot <config_boot_file>"
-  echo "         list-config-samples [<grep_expr>]"
+  echo "         list-config-samples"
   echo "         create-openssl-keypair <host-name>"
   echo "         destroy-openssl-keypair <host-name>"
   echo "         list-openssl-keypairs [<grep_expr>]"
   echo "         create-ssh-keyring <keyring> <ssh-key1> <ssh-key2> ... <ssh-keyN>"
   echo "         destroy-ssh-keyring <keyring>"
-  echo "         list-ssh-keyrings [<grep_expr>]"
-  echo "         list-ssh-keys [<grep_expr>]"
+  echo "         list-ssh-keyrings"
+  echo "         list-ssh-keys"
 }
 
 function create_config() {
@@ -66,14 +70,21 @@ function create_config() {
   if [ -e "${CONFIG_FILE}" ]; then
     suicide "File already exists: ${CONFIG_FILE}"
   fi
-  echo "Using sample: ${CONFIG_SAMPLE_FILE}"
+  HOST_NAME_MATCH="$(egrep "\@host-name-match:" "${CONFIG_SAMPLE_FILE}" | sed 's/\s*\@host-name-match:\s*//;s/^[ \t]*//;s/[ \t]*$//')"
+  if [ ${#HOST_NAME_MATCH} -eq 0 ]; then
+    HOST_NAME_MATCH=".*"
+  fi
+  echo "${HOST_NAME}" | egrep "^${HOST_NAME_MATCH}$" >/dev/null 2>&1
+  if [ ${?} -ne 0 ]; then
+    suicide "Specified host-name ${HOST_NAME} does not match required pattern: ${HOST_NAME_MATCH}"
+  fi
   ${SHARE_ROOT}/process-sample-file "${CONFIG_SAMPLE_FILE}" --host-name=${HOST_NAME} ${@} >"${TMP_CONFIG_FILE}"
   if [ ${?} -ne 0 ]; then
     suicide "Sample processing failed: ${CONFIG_SAMPLE_FILE}"
   fi
   ${SHARE_ROOT}/validate-vyatta-config.pl "${TMP_CONFIG_FILE}"
   if [ ${?} -ne 0 ]; then
-    suicide "Config validation failed: ${TMP_CONFIG_FILE}"
+    suicide "Config validation failed!"
   fi
   if [ -n "${CONFIG_PASSWORD}" ]; then
     openssl enc -aes-256-cbc -a -salt -in "${TMP_CONFIG_FILE}" -out "${CONFIG_FILE}" -pass pass:"${CONFIG_PASSWORD}"
@@ -81,12 +92,9 @@ function create_config() {
     suicide "You must NOT use this command with no password set!"
   fi
   rm "${TMP_CONFIG_FILE}"
+  all_ok
   separator
-  echo "[ ${HOST_NAME} ]"
-  echo "Generated config file: ${CONFIG_FILE}"
-  if [ -n ${CONFIG_PASSWORD} ]; then
-    echo "Config password: $CONFIG_PASSWORD"
-  fi
+  echo "sudo vyinstall config ${HOST_NAME} ${CONFIG_PASSWORD}"
   separator
 }
 
@@ -94,9 +102,9 @@ function create_bundle() {
   OPENSSL_KEY_PASSWORD="${CONFIG_PASSWORD}"
   create_config ${@} >/dev/null
   create_openssl_keypair ${2} >/dev/null
+  all_ok
   separator
-  echo "[ ${HOST_NAME} ]"
-  echo "Config/OpenSSL private key bundle password: ${CONFIG_PASSWORD}"
+  echo "sudo vyinstall bundle ${HOST_NAME} ${CONFIG_PASSWORD}"
   separator
 }
 
@@ -110,8 +118,9 @@ function destroy_config() {
     suicide "File does not exist: ${CONFIG_FILE}"
   fi
   rm "${CONFIG_FILE}"
-  echo "[ Destroyed config ${HOST_NAME} ]"
-  echo "Config file ${CONFIG_FILE} deleted"
+  separator
+  echo "Destroyed config: ${HOST_NAME}"
+  separator
 }
 
 function list_configs() {
@@ -120,6 +129,9 @@ function list_configs() {
   else
     GREP_EXPR="."
   fi
+  separator
+  echo "NAME"
+  separator
   ls -1 "${CONFIGS_DIR}" | sed 's/\.config$//' | egrep "${GREP_EXPR}"
 }
 
@@ -136,12 +148,18 @@ function samplify_config_boot() {
 }
 
 function list_config_samples() {
-  if [ ${#} -gt 0 ]; then
-    GREP_EXPR=${@}
-  else
-    GREP_EXPR="."
-  fi
-  ls -1 "${CONFIG_SAMPLES_DIR}" | sed 's/\.sample$//' | egrep "${GREP_EXPR}"
+  FORMAT="%-25s %s\n"
+  CONFIG_SAMPLES="$(ls -1 "${CONFIG_SAMPLES_DIR}" | sed 's/\.sample$//')"
+  separator
+  printf "${FORMAT}" "NAME" "DESCRIPTION"
+  separator
+  for CONFIG_SAMPLE in ${CONFIG_SAMPLES}; do
+    CONFIG_SAMPLE_DESCRIPTION="$(egrep "\@description:" "${CONFIG_SAMPLES_DIR}/${CONFIG_SAMPLE}.sample" | sed 's/\s*\@description:\s*//;s/^[ \t]*//;s/[ \t]*$//')"
+    if [ ${#CONFIG_SAMPLE_DESCRIPTION} -eq 0 ]; then
+      CONFIG_SAMPLE_DESCRIPTION="-"
+    fi
+    printf "${FORMAT}" "${CONFIG_SAMPLE}" "${CONFIG_SAMPLE_DESCRIPTION}"
+  done
 }
 
 function create_openssl_keypair() {
@@ -177,11 +195,9 @@ function create_openssl_keypair() {
   fi
   cp "${TMP_OPENSSL_CRT_FILE}" "${OPENSSL_CRT_FILE}"
   rm "${TMP_OPENSSL_CONFIG_FILE}" "${TMP_OPENSSL_KEY_FILE}" "${TMP_OPENSSL_CSR_FILE}" "${TMP_OPENSSL_CRT_FILE}"
+  all_ok
   separator
-  echo "[ ${HOST_NAME} ]"
-  echo "Generated OpenSSL certificate file: ${OPENSSL_CRT_FILE}"
-  echo "Generated OpenSSL private key file: ${OPENSSL_KEY_FILE}"
-  echo "OpenSSL private key password: ${OPENSSL_KEY_PASSWORD}"
+  echo "sudo vyinstall openssl-keypair ${HOST_NAME} ${OPENSSL_KEY_PASSWORD}"
   separator
 }
 
@@ -196,14 +212,19 @@ function destroy_openssl_keypair() {
     suicide "OpenSSL keypair doest not exist: ${HOST_NAME}"
   fi
   OPENSSL_CRT_DATE="$(openssl x509 -in "${OPENSSL_CRT_FILE}" -noout -startdate | sed 's/^notBefore=//')"
-  openssl ca -revoke "${OPENSSL_CRT_FILE}" -config "${OPENSSL_CONFIG_FILE}"
-  openssl ca -gencrl -out "${OPENSSL_CRL_FILE}" -config "${OPENSSL_CONFIG_FILE}"
+  openssl ca -revoke "${OPENSSL_CRT_FILE}" -config "${OPENSSL_CONFIG_FILE}" >/dev/null 2>&1
+  if [ ${?} -ne 0 ]; then
+    suicide "OpenSSL certificate revocation failed: ${OPENSSL_CRT_FILE}"
+  fi
+  openssl ca -gencrl -out "${OPENSSL_CRL_FILE}" -config "${OPENSSL_CONFIG_FILE}" >/dev/null 2>&1
+  if [ ${?} -ne 0 ]; then
+    suicide "OpenSSL CRL generation failed!"
+  fi
   rm -f "${OPENSSL_CRL_LINK}"
   ln -s "${OPENSSL_CRL_FILE}" "${OPENSSL_CRL_LINK}"
   rm "${OPENSSL_KEY_FILE}" "${OPENSSL_CRT_FILE}"
   separator
-  echo "[ Destroyed ${HOST_NAME} created at ${OPENSSL_CRT_DATE} ]"
-  echo "OpenSSL certificate revoked, keypair deleted"
+  echo "Destroyed OpenSSL keypair: ${HOST_NAME} (issued at ${OPENSSL_CRT_DATE})"
   separator
 }
 
@@ -213,6 +234,9 @@ function list_openssl_keypairs() {
   else
     GREP_EXPR="."
   fi
+  separator
+  echo "NAME"
+  separator
   ls -1 "${OPENSSL_KEYPAIRS_DIR}" | egrep ".*\.crt$" | sed 's/\.crt$//' | egrep "${GREP_EXPR}"
 }
 
@@ -223,7 +247,6 @@ function recreate_openssl_instance() {
     NEW_INSTANCE_NAME=${RANDOM}
   fi 
   TMP_OPENSSL_CONFIG_FILE="/tmp/vytool.openssl.cnf.${SID}"
-
   echo "Using ${OPENSSL_CONFIG_SAMPLE_FILE} as sample to create new vyTool OpenSSL config..."
   ${SHARE_ROOT}/process-sample-file "${OPENSSL_CONFIG_SAMPLE_FILE}" --instance-name=${NEW_INSTANCE_NAME} >"${TMP_OPENSSL_CONFIG_FILE}"
   if [ ${?} -ne 0 ]; then
@@ -268,9 +291,9 @@ function create_ssh_keyring() {
     cat "${SSH_KEY_FILE}" >> "${TMP_SSH_KEYRING_FILE}"
   done
   mv "${TMP_SSH_KEYRING_FILE}" "${SSH_KEYRING_FILE}"
+  all_ok
   separator
-  echo "[ ${SSH_KEYRING} ]"
-  echo "Created SSH keyring file: ${SSH_KEYRING_FILE}"
+  echo "sudo vyinstall ssh-keyring ${SSH_KEYRING}"
   separator
 }
 
@@ -283,25 +306,30 @@ function destroy_ssh_keyring() {
   if [ ! -e "${SSH_KEYRING_FILE}" ]; then
     suicide "File does not exist: ${SSH_KEYRING_FILE}"
   fi
-  rm "${SSH_KEYRING_FILE}" 
+  rm "${SSH_KEYRING_FILE}"
+  separator
+  echo "Destroyed SSH keyring: ${SSH_KEYRING}"
+  separator
 }
 
 function list_ssh_keyrings() {
-  if [ ${#} -gt 0 ]; then
-    GREP_EXPR=${@}
-  else
-    GREP_EXPR="."
-  fi
-  ls -1 "${SSH_KEYRINGS_DIR}" | sed 's/\.authorized_keys$//' | egrep "${GREP_EXPR}"
+  separator
+  echo "NAME"
+  separator
+  ls -1 "${SSH_KEYRINGS_DIR}" | sed 's/\.authorized_keys$//'
 }
 
 function list_ssh_keys() {
-  if [ ${#} -gt 0 ]; then
-    GREP_EXPR=${@}
-  else
-    GREP_EXPR="."
-  fi
-  ls -1 "${SSH_KEYS_DIR}" | sed 's/\.pub$//' | egrep "${GREP_EXPR}"
+  FORMAT="%-25s %-15s %s\n"
+  SSH_KEYS="$(ls -1 "${SSH_KEYS_DIR}" | sed 's/\.pub$//')"
+  separator
+  printf "${FORMAT}" "NAME" "TYPE" "ID"
+  separator
+  for SSH_KEY in ${SSH_KEYS}; do
+    SSH_KEY_TYPE="$(awk '{print $1}' ${SSH_KEYS_DIR}/${SSH_KEY}.pub)"
+    SSH_KEY_DESCRIPTION="$(awk '{print $NF}' ${SSH_KEYS_DIR}/${SSH_KEY}.pub)"
+    printf "${FORMAT}" "${SSH_KEY}" "${SSH_KEY_TYPE}" "${SSH_KEY_DESCRIPTION}"
+  done
 }
 
 if [ ${UID} -ne 0 ]; then
@@ -314,15 +342,15 @@ case ${1} in
   'destroy-config')shift; destroy_config ${@};;
   'list-configs')shift; list_configs ${@};;
   'samplify-config-boot')shift; samplify_config_boot ${@};;
-  'list-config-samples')shift; list_config_samples ${@};;
+  'list-config-samples')shift; list_config_samples;;
   'create-openssl-keypair')shift; create_openssl_keypair ${@};;
   'destroy-openssl-keypair')shift; destroy_openssl_keypair ${@};;
   'list-openssl-keypairs')shift; list_openssl_keypairs ${@};;
-  'recreate-openssl-instance')shift; recreate_openssl_instance ${@};;
+  'recreate-openssl-instance')shift; recreate_openssl_instance ${@};; # DANGEROUS!!!
   'create-ssh-keyring')shift; create_ssh_keyring ${@};;
   'destroy-ssh-keyring')shift; destroy_ssh_keyring ${@};;
-  'list-ssh-keyrings')shift; list_ssh_keyrings ${@};;
-  'list-ssh-keys')shift; list_ssh_keys ${@};;
+  'list-ssh-keyrings')shift; list_ssh_keyrings;;
+  'list-ssh-keys')shift; list_ssh_keys;;
   'show-help'|'--help')show_help;;
   *)show_help; exit 1;;
 esac
