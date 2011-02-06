@@ -170,7 +170,7 @@ service {
             subnet 192.168.%(lan-id).0/24 {
                 default-router 192.168.%(lan-id).254
                 dns-server 192.168.%(lan-id).254
-                domain-name vvpgroup.vvpgroup.com
+                domain-name %(domain-name)
                 lease 86400
                 ntp-server 192.168.%(lan-id).254
                 start 192.168.%(lan-id).201 {
@@ -203,6 +203,7 @@ service {
     }
     ssh {
         allow-root
+        disable-password-authentication
         port 22
         protocol-version v2
     }
