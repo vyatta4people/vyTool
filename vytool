@@ -154,7 +154,7 @@ function list_config_samples() {
   printf "${FORMAT}" "NAME" "DESCRIPTION"
   separator
   for CONFIG_SAMPLE in ${CONFIG_SAMPLES}; do
-    CONFIG_SAMPLE_DESCRIPTION="$(egrep "\@description:" "${CONFIG_SAMPLES_DIR}/${CONFIG_SAMPLE}.sample" | sed 's/\s*\@description:\s*//;s/^[ \t]*//;s/[ \t]*$//')"
+    CONFIG_SAMPLE_DESCRIPTION="$(egrep "\@sample-description:" "${CONFIG_SAMPLES_DIR}/${CONFIG_SAMPLE}.sample" | sed 's/\s*\@sample-description:\s*//;s/^[ \t]*//;s/[ \t]*$//')"
     if [ ${#CONFIG_SAMPLE_DESCRIPTION} -eq 0 ]; then
       CONFIG_SAMPLE_DESCRIPTION="-"
     fi
