@@ -144,7 +144,7 @@ function samplify_config_boot() {
   if [ ${?} -ne 0 ]; then
     suicide "Invalid config.boot file: ${CONFIG_BOOT_FILE}"
   fi
-  egrep -v "\s+hw-d " "${CONFIG_BOOT_FILE}" | sed 's/host-name.*[a-zA-Z0-9-]$/host-name %(host-name)/'
+  egrep -v "\s+hw-id " "${CONFIG_BOOT_FILE}" | sed 's/host-name.*[a-zA-Z0-9-]$/host-name %(host-name)/'
 }
 
 function list_config_samples() {
