@@ -63,6 +63,9 @@ function show_help() {
   echo "    vytool create-bundle SimpleRouter rt01 --lan-id=23 --domain-name=example.com"
   echo "  4. Generate SSH public keyring south-park from 3 user public keys:"
   echo "    vytool create-ssh-keyring south-park stan kyle kenny"
+  echo ""
+  echo "More information:"
+  echo "  http://www.vyatta4people.org/vytool/"
 }
 
 function create_config() {
