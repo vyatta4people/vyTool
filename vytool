@@ -53,6 +53,16 @@ function show_help() {
   echo "         destroy-ssh-keyring <keyring>"
   echo "         list-ssh-keyrings"
   echo "         list-ssh-keys"
+  echo ""
+  echo "Examples:"
+  echo "  1. Generate configuration for router rt01 from sample SimpleRouter:"
+  echo "    vytool create-config SimpleRouter rt01 --lan-id=23 --domain-name=example.com"
+  echo "  2. Generate OpenSSL certificate and private key for router rt01:"
+  echo "    vytool create-openssl-keypair rt01"
+  echo "  3. Perform two steps above by one command:"
+  echo "    vytool create-bundle SimpleRouter rt01 --lan-id=23 --domain-name=example.com"
+  echo "  4. Generate SSH public keyring south-park from 3 user public keys:"
+  echo "    vytool create-ssh-keyring south-park stan kyle kenny"
 }
 
 function create_config() {
