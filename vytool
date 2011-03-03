@@ -6,6 +6,7 @@ SID=${RANDOM}
 DATETIME="$(date +%Y%m%d%H%M%S)"
 CONF_ROOT="/etc/vytool"
 CONFIG_SAMPLES_DIR="${CONF_ROOT}/config-samples"
+CONFIG_PARTIALS_DIR="${CONF_ROOT}/config-partials"
 OPENSSL_CONFIG_FILE="${CONF_ROOT}/openssl.cnf"
 SSH_KEYS_DIR="${CONF_ROOT}/ssh-keys"
 SHARE_ROOT="/usr/share/vytool"
@@ -43,12 +44,14 @@ function show_help() {
   echo "  vytool create-config <config-sample> <host-name> [--<key1>=<value1> --<key2>=<value2> ... --<keyN>=<valueN>]"
   echo "         create-bundle <config-sample> <host-name> [--<key1>=<value1> --<key2>=<value2> ... --<keyN>=<valueN>]"
   echo "         destroy-config <host-name>"
-  echo "         list-configs [<grep_expr>]"
-  echo "         samplify-config-boot <config_boot_file>"
+  echo "         list-configs [<grep-expr>]"
+  echo "         samplify-config-boot <config-boot-file>"
   echo "         list-config-samples"
+  echo "         list-config-partials [<grep-expr>]"
+  echo "         show-config-partial <partial>"
   echo "         create-openssl-keypair <host-name>"
   echo "         destroy-openssl-keypair <host-name>"
-  echo "         list-openssl-keypairs [<grep_expr>]"
+  echo "         list-openssl-keypairs [<grep-expr>]"
   echo "         create-ssh-keyring <keyring> <ssh-key1> <ssh-key2> ... <ssh-keyN>"
   echo "         destroy-ssh-keyring <keyring>"
   echo "         list-ssh-keyrings"
@@ -64,8 +67,11 @@ function show_help() {
   echo "  4. Generate SSH public keyring south-park from 3 user public keys:"
   echo "    vytool create-ssh-keyring south-park stan kyle kenny"
   echo ""
-  echo "More information:"
-  echo "  http://www.vyatta4people.org/vytool/"
+  echo "NB! Config sample files stored in ${CONFIG_SAMPLES_DIR} directory must have '.sample' extension!"
+  echo "NB! Config partial files stored in ${CONFIG_PARTIALS_DIR} directory must have '.partial' extension!"
+  echo "NB! SSH public key files stored in ${SSH_KEYS_DIR} directory must have '.pub' extension!"
+  echo ""
+  echo "More information: http://www.vyatta4people.org/vytool/"
 }
 
 function create_config() {
@@ -123,7 +129,7 @@ function create_bundle() {
 
 function destroy_config() {
   if [ ${#} -ne 1 ]; then
-    suicide "destroy-config takes only one argument: config name"
+    suicide "destroy-config takes only one argument: <host-name>"
   fi
   HOST_NAME=${1}
   CONFIG_FILE="${CONFIGS_DIR}/${HOST_NAME}.config"
@@ -145,12 +151,12 @@ function list_configs() {
   separator
   echo "NAME"
   separator
-  ls -1 "${CONFIGS_DIR}" | sed 's/\.config$//' | egrep "${GREP_EXPR}"
+  ls -1 "${CONFIGS_DIR}" | egrep "\.config$" | sed 's/\.config$//' | egrep "${GREP_EXPR}"
 }
 
 function samplify_config_boot() {
   if [ ${#} -ne 1 ]; then
-    suicide "samplify-config-boot takes only one argument: config.boot file name"
+    suicide "samplify-config-boot takes only one argument: <config-boot-file>"
   fi
   CONFIG_BOOT_FILE="${1}"
   ${SHARE_ROOT}/validate-vyatta-config.pl "${CONFIG_BOOT_FILE}"
@@ -162,7 +168,7 @@ function samplify_config_boot() {
 
 function list_config_samples() {
   FORMAT="%-25s %s\n"
-  CONFIG_SAMPLES="$(ls -1 "${CONFIG_SAMPLES_DIR}" | sed 's/\.sample$//')"
+  CONFIG_SAMPLES="$(ls -1 "${CONFIG_SAMPLES_DIR}" | egrep "\.sample$" | sed 's/\.sample$//')"
   separator
   printf "${FORMAT}" "NAME" "DESCRIPTION"
   separator
@@ -175,9 +181,43 @@ function list_config_samples() {
   done
 }
 
+function list_config_partials() {
+  if [ ${#} -gt 0 ]; then
+    GREP_EXPR=${@}
+  else
+    GREP_EXPR="."
+  fi
+  FORMAT="%-25s %s\n"
+  CONFIG_PARTIALS="$(ls -1 "${CONFIG_PARTIALS_DIR}" | egrep "\.partial$" | sed 's/\.partial$//' |  egrep "${GREP_EXPR}")"
+  separator
+  printf "${FORMAT}" "NAME" "DESCRIPTION"
+  separator
+  for CONFIG_PARTIAL in ${CONFIG_PARTIALS}; do
+    CONFIG_PARTIAL_DESCRIPTION="$(egrep "\@partial-description:" "${CONFIG_PARTIALS_DIR}/${CONFIG_PARTIAL}.partial" | sed 's/\s*\@partial-description:\s*//;s/^[ \t]*//;s/[ \t]*$//')"
+    if [ ${#CONFIG_PARTIAL_DESCRIPTION} -eq 0 ]; then
+      CONFIG_PARTIAL_DESCRIPTION="-"
+    fi
+    printf "${FORMAT}" "${CONFIG_PARTIAL}" "${CONFIG_PARTIAL_DESCRIPTION}"
+  done
+}
+
+function show_config_partial() {
+  if [ ${#} -ne 1 ]; then
+    suicide "show-config-partial takes only one argument: <partial>"
+  fi
+  CONFIG_PARTIAL="${1}"
+  CONFIG_PARTIAL_FILE="${CONFIG_PARTIALS_DIR}/${CONFIG_PARTIAL}.partial"
+  if [ ! -f "${CONFIG_PARTIAL_FILE}" ]; then
+    suicide "Config partial file does not exist: ${CONFIG_PARTIAL_FILE}"
+  fi
+  echo "--- CUT HERE ---"
+  cat "${CONFIG_PARTIAL_FILE}"
+  echo "--- CUT HERE ---"
+}
+
 function create_openssl_keypair() {
   if [ ${#} -ne 1 ]; then
-    suicide "create-openssl-keypair takes only one argument: host-name"
+    suicide "create-openssl-keypair takes only one argument: <host-name>"
   fi
   HOST_NAME="${1}"
   TMP_OPENSSL_CONFIG_FILE="/tmp/vytool.openssl.cnf.${SID}"
@@ -216,7 +256,7 @@ function create_openssl_keypair() {
 
 function destroy_openssl_keypair() {
   if [ ${#} -ne 1 ]; then
-    suicide "destroy-openssl-keypair takes only one argument: host-name"
+    suicide "destroy-openssl-keypair takes only one argument: <host-name>"
   fi
   HOST_NAME="${1}"
   OPENSSL_KEY_FILE="${OPENSSL_KEYPAIRS_DIR}/${HOST_NAME}.key"
@@ -250,7 +290,7 @@ function list_openssl_keypairs() {
   separator
   echo "NAME"
   separator
-  ls -1 "${OPENSSL_KEYPAIRS_DIR}" | egrep ".*\.crt$" | sed 's/\.crt$//' | egrep "${GREP_EXPR}"
+  ls -1 "${OPENSSL_KEYPAIRS_DIR}" | egrep "\.crt$" | sed 's/\.crt$//' | egrep "${GREP_EXPR}"
 }
 
 function recreate_openssl_instance() {
@@ -312,7 +352,7 @@ function create_ssh_keyring() {
 
 function destroy_ssh_keyring() {
   if [ ${#} -ne 1 ]; then
-    suicide "destory-ssh-keyring takes only one argument: SSH keyring"
+    suicide "destory-ssh-keyring takes only one argument: <keyring>"
   fi
   SSH_KEYRING="${1}"
   SSH_KEYRING_FILE="${SSH_KEYRINGS_DIR}/${SSH_KEYRING}.authorized_keys";
@@ -329,12 +369,12 @@ function list_ssh_keyrings() {
   separator
   echo "NAME"
   separator
-  ls -1 "${SSH_KEYRINGS_DIR}" | sed 's/\.authorized_keys$//'
+  ls -1 "${SSH_KEYRINGS_DIR}" | egrep "\.authorized_keys$" | sed 's/\.authorized_keys$//'
 }
 
 function list_ssh_keys() {
   FORMAT="%-25s %-15s %s\n"
-  SSH_KEYS="$(ls -1 "${SSH_KEYS_DIR}" | sed 's/\.pub$//')"
+  SSH_KEYS="$(ls -1 "${SSH_KEYS_DIR}" | egrep "\.pub$" | sed 's/\.pub$//')"
   separator
   printf "${FORMAT}" "NAME" "TYPE" "ID"
   separator
@@ -356,6 +396,8 @@ case ${1} in
   'list-configs')shift; list_configs ${@};;
   'samplify-config-boot')shift; samplify_config_boot ${@};;
   'list-config-samples')shift; list_config_samples;;
+  'list-config-partials')shift; list_config_partials ${@};;
+  'show-config-partial')shift; show_config_partial ${@};;
   'create-openssl-keypair')shift; create_openssl_keypair ${@};;
   'destroy-openssl-keypair')shift; destroy_openssl_keypair ${@};;
   'list-openssl-keypairs')shift; list_openssl_keypairs ${@};;
