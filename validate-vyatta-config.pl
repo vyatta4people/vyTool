@@ -23,8 +23,8 @@ foreach (@all_set_nodes) {
   my ($node_path_ref) 	= @$_;
   my $element_count 	= scalar(@$node_path_ref);
   my @non_leaf_elements = @$node_path_ref[0 .. ($element_count - 2)];
-  my $node_path 	= join(' ', @non_leaf_elements); $node_path =~ s/'//g;
-  my $node_value	= @$node_path_ref[$element_count - 1]; $node_value =~ s/'//g;
+  my $node_path 	= join(' ', @non_leaf_elements); 	$node_path  =~ s/'//g;
+  my $node_value	= @$node_path_ref[$element_count - 1]; 	$node_value =~ s/'//g;
   my $node_tmpl_ref 	= $config->parseTmplAll($node_path);
 
   if ((defined($node_tmpl_ref->{type})) && ($node_tmpl_ref->{type} ne 'txt')) { 
