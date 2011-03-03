@@ -1,6 +1,6 @@
 /******************************************************************************
  @sample-description: Simple router with 2 ethernet interfaces
- @host-name-match: [a-z0-9-]{2,}
+ @host-name-match: [a-z0-9-]{4,}
 ******************************************************************************/
 firewall {
     all-ping enable
