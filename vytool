@@ -11,6 +11,7 @@ OPENSSL_CONFIG_FILE="${CONF_ROOT}/openssl.cnf"
 SSH_KEYS_DIR="${CONF_ROOT}/ssh-keys"
 SHARE_ROOT="/usr/share/vytool"
 OPENSSL_CONFIG_SAMPLE_FILE="${SHARE_ROOT}/openssl.cnf.sample"
+LIB_ROOT="/usr/lib/vytool"
 DATA_ROOT="/var/lib/vytool"
 CONFIGS_DIR="${DATA_ROOT}/configs"
 OPENSSL_DIR="${DATA_ROOT}/openssl"
@@ -97,11 +98,11 @@ function create_config() {
   if [ ${?} -ne 0 ]; then
     suicide "Specified host-name ${HOST_NAME} does not match required pattern: ${HOST_NAME_MATCH}"
   fi
-  ${SHARE_ROOT}/process-sample-file "${CONFIG_SAMPLE_FILE}" --host-name=${HOST_NAME} ${@} >"${TMP_CONFIG_FILE}"
+  ${LIB_ROOT}/process-sample-file.pl "${CONFIG_SAMPLE_FILE}" --host-name=${HOST_NAME} ${@} >"${TMP_CONFIG_FILE}"
   if [ ${?} -ne 0 ]; then
     suicide "Sample processing failed: ${CONFIG_SAMPLE_FILE}"
   fi
-  ${SHARE_ROOT}/validate-vyatta-config.pl "${TMP_CONFIG_FILE}"
+  vyatta-config-validator.pl "${TMP_CONFIG_FILE}"
   if [ ${?} -ne 0 ]; then
     suicide "Config validation failed!"
   fi
@@ -159,7 +160,7 @@ function samplify_config_boot() {
     suicide "samplify-config-boot takes only one argument: <config-boot-file>"
   fi
   CONFIG_BOOT_FILE="${1}"
-  ${SHARE_ROOT}/validate-vyatta-config.pl "${CONFIG_BOOT_FILE}"
+  vyatta-config-validator.pl "${CONFIG_BOOT_FILE}"
   if [ ${?} -ne 0 ]; then
     suicide "Invalid config.boot file: ${CONFIG_BOOT_FILE}"
   fi
@@ -298,10 +299,10 @@ function recreate_openssl_instance() {
     NEW_INSTANCE_NAME="${@}"
   else
     NEW_INSTANCE_NAME=${RANDOM}
-  fi 
+  fi
   TMP_OPENSSL_CONFIG_FILE="/tmp/vytool.openssl.cnf.${SID}"
   echo "Using ${OPENSSL_CONFIG_SAMPLE_FILE} as sample to create new vyTool OpenSSL config..."
-  ${SHARE_ROOT}/process-sample-file "${OPENSSL_CONFIG_SAMPLE_FILE}" --instance-name=${NEW_INSTANCE_NAME} >"${TMP_OPENSSL_CONFIG_FILE}"
+  ${LIB_ROOT}/process-sample-file.pl "${OPENSSL_CONFIG_SAMPLE_FILE}" --instance-name=${NEW_INSTANCE_NAME} >"${TMP_OPENSSL_CONFIG_FILE}"
   if [ ${?} -ne 0 ]; then
     suicide "OpenSSL config sample processing failed: ${OPENSSL_CONFIG_SAMPLE_FILE}"
   fi
