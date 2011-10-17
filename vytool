@@ -22,6 +22,9 @@ OPENSSL_CRL_LINK="${OPENSSL_DIR}/crl.pem"
 SSH_KEYRINGS_DIR="${DATA_ROOT}/ssh-keyrings"
 source "${CONF_ROOT}/environment"
 
+# Vyatta Core 6.3 environment workaround
+source "/etc/default/vyatta" application=vytool
+
 function suicide() {
   echo
   echo "[ ERROR ]" >&2
