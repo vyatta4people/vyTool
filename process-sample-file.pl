@@ -28,7 +28,7 @@ my @unique_sample_keys  = grep {! $seen_sample_keys{$_}++} @sample_keys;
 @sample_keys            = sort(@unique_sample_keys);
 
 # Process keys from command line
-my @sub_pairs 	= split('--', join('', @ARGV)); shift(@sub_pairs);
+my @sub_pairs 	= split('::--', '::' . join('::', @ARGV)); shift(@sub_pairs);
 my %subs	= ();
 foreach (@sub_pairs) {
   die(qq{Invalid kay/value pair: $_} . "\n") if !($_ =~ m/^[a-z][a-z0-9-]+=.+$/);
